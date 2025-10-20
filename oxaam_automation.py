@@ -22,12 +22,42 @@ class OxaamAutomation:
         self.free_accounts = []
         self.session_id = self.generate_session_id()
         self.catbox_url = ""
+        self.registered_users_file = "oxaam_registered_users.json"
     
     def generate_session_id(self):
         """Generate unique session ID"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
         return f"session_{timestamp}_{random_suffix}"
+    
+    def load_registered_users(self):
+        """Load list of registered users"""
+        try:
+            if Path(self.registered_users_file).exists():
+                with open(self.registered_users_file, 'r') as f:
+                    return json.load(f)
+            return []
+        except:
+            return []
+    
+    def save_registered_user(self, email):
+        """Save registered user to prevent duplicate registration"""
+        try:
+            users = self.load_registered_users()
+            users.append({
+                "email": email,
+                "registered_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "session_id": self.session_id
+            })
+            with open(self.registered_users_file, 'w') as f:
+                json.dump(users, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Could not save registered user: {str(e)}")
+    
+    def is_already_registered(self, email):
+        """Check if user already registered in this run"""
+        users = self.load_registered_users()
+        return any(u['email'] == email for u in users)
     
     def generate_random_phone(self):
         """Generate random phone number starting with 869"""
@@ -130,6 +160,9 @@ class OxaamAutomation:
                 service_name_match = re.search(r'<strong>([^<]+?(?:Premium|PREMIUM|PRO|Plus|AI|TV\+|Music|Games)?[^<]*?)</strong>', block)
                 service_name = service_name_match.group(1).strip() if service_name_match else f"Service_{idx}"
                 
+                # Clean HTML entities
+                service_name = service_name.replace('&nbsp;', ' ')
+                
                 print(f"\n{idx}. 🎯 Processing: {service_name}")
                 
                 # Try to find email
@@ -141,29 +174,34 @@ class OxaamAutomation:
                 ]
                 
                 for pattern in email_patterns:
-                    match = re.search(pattern, block)
+                    match = re.search(pattern, block, re.IGNORECASE)
                     if match:
                         email = match.group(1).strip()
                         break
                 
-                # Try to find password
+                # Try to find password - more comprehensive search
                 password = ""
-                password_patterns = [
-                    r'Password\s*➜\s*<span>([^<]+)</span>',
-                    r'Password\s*➜\s*([^\s<]+)',
-                    r'data-copy="([^"]+)"[^>]*>📋</button>\s*</div>\s*<div[^>]*>.*?Password'
-                ]
                 
-                for pattern in password_patterns:
-                    matches = re.findall(pattern, block)
-                    if matches:
-                        for match in matches:
-                            # Skip if it looks like email
-                            if '@' not in match and match != email:
-                                password = match.strip()
-                                break
-                    if password:
-                        break
+                # Method 1: Look for Password ➜ pattern
+                password_match = re.search(r'Password\s*➜\s*<span>([^<]+)</span>', block, re.IGNORECASE)
+                if password_match:
+                    password = password_match.group(1).strip()
+                
+                # Method 2: Find all data-copy values and exclude emails
+                if not password:
+                    data_copy_matches = re.findall(r'data-copy="([^"]+)"', block)
+                    for match in data_copy_matches:
+                        if '@' not in match and len(match) > 5:  # Not an email and reasonable length
+                            password = match.strip()
+                            break
+                
+                # Method 3: Look for password in div after Password text
+                if not password:
+                    password_div_match = re.search(r'Password\s*➜\s*([^\s<]+)', block, re.IGNORECASE)
+                    if password_div_match:
+                        pwd = password_div_match.group(1).strip()
+                        if '@' not in pwd:
+                            password = pwd
                 
                 # Try to find official website
                 official_link = ""
@@ -205,6 +243,15 @@ class OxaamAutomation:
         print(f"🆕 NEW REGISTRATION SESSION: {self.session_id}")
         print(f"{'='*60}")
         
+        # Generate credentials first to check if already registered
+        email = self.generate_random_email()
+        
+        # Check if this email was already registered
+        if self.is_already_registered(email):
+            print(f"⚠️  Email {email} already registered in this session")
+            print("⚠️  Skipping registration - using existing account")
+            return False
+        
         print("🔄 Navigating to Oxaam.com...")
         try:
             await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
@@ -213,9 +260,8 @@ class OxaamAutomation:
             print(f"❌ Failed to load page: {str(e)}")
             return False
         
-        # Generate random credentials
+        # Generate other credentials
         name = self.generate_random_name()
-        email = self.generate_random_email()
         phone = self.generate_random_phone()
         password = self.generate_strong_password()
         
@@ -318,6 +364,10 @@ class OxaamAutomation:
             await page.wait_for_timeout(4000)
             
             print("✅ Account registered successfully!")
+            
+            # Save this registered user
+            self.save_registered_user(email)
+            
             return True
             
         except Exception as e:
@@ -447,6 +497,14 @@ class OxaamAutomation:
         async with async_playwright() as p:
             print(f"🚀 Starting Oxaam Automation (Headless: {self.headless})...")
             
+            # Check if already registered in this run
+            users = self.load_registered_users()
+            if users:
+                print(f"\n⚠️  Found {len(users)} already registered user(s)")
+                print("⚠️  ONE REGISTRATION PER RUN - Skipping new registration")
+                print("⚠️  Delete 'oxaam_registered_users.json' to register a new account")
+                return
+            
             # Launch browser with enhanced settings
             browser = await p.chromium.launch(
                 headless=self.headless,
@@ -467,7 +525,7 @@ class OxaamAutomation:
             try:
                 # Step 1: Register new account
                 if not await self.register_account(page):
-                    print("❌ Registration failed, aborting...")
+                    print("❌ Registration failed or skipped")
                     return
                 
                 # Step 2: Navigate to free services
@@ -497,3 +555,24 @@ class OxaamAutomation:
             finally:
                 await browser.close()
                 print("\n✅ Automation completed!")
+
+# Main execution
+async def main():
+    # Create automation instance (headless=True for background operation)
+    automation = OxaamAutomation(headless=True, save_results=True)
+    
+    # Run automation
+    await automation.run()
+    
+    # Display specific account info
+    if automation.free_accounts:
+        print("\n🔍 All Retrieved Accounts:")
+        for acc in automation.free_accounts:
+            print(f"\n   🎯 {acc['service']}")
+            print(f"      📧 {acc['email']}")
+            print(f"      🔑 {acc['password']}")
+            print(f"      🔗 {acc['official_website']}")
+            print(f"      📌 {acc['type']}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
