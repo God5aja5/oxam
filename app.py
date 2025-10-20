@@ -3,8 +3,7 @@ import json
 import threading
 import time
 from datetime import datetime
-from flask import Flask, jsonify, request
-from werkzeug.serving import make_server
+from flask import Flask, jsonify
 import os
 
 # Import your OxaamAutomation class
@@ -178,20 +177,4 @@ def get_accounts():
     })
 
 if __name__ == '__main__':
-    # Install Playwright browsers on first run
-    import subprocess
-    try:
-        print("Installing Playwright browsers...")
-        subprocess.run(["playwright", "install", "chromium"], check=True)
-        print("Playwright browsers installed successfully!")
-    except Exception as e:
-        print(f"Error installing Playwright browsers: {e}")
-        print("Trying alternative installation method...")
-        try:
-            subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
-            print("Playwright browsers installed successfully!")
-        except Exception as e2:
-            print(f"Error with alternative installation: {e2}")
-            print("Please ensure Playwright browsers are installed manually.")
-    
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
