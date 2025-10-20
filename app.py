@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from flask import Flask, jsonify
 import os
+from pathlib import Path
 
 # Import your OxaamAutomation class
 from oxaam_automation import OxaamAutomation
@@ -32,6 +33,34 @@ latest_results = {
     "timestamp": None
 }
 
+# History of all scraping sessions
+scraping_history = []
+history_file = "oxaam_scraping_history.json"
+
+def load_history():
+    """Load scraping history from file"""
+    global scraping_history
+    try:
+        if Path(history_file).exists():
+            with open(history_file, 'r') as f:
+                scraping_history = json.load(f)
+    except Exception as e:
+        print(f"⚠️  Could not load history: {str(e)}")
+        scraping_history = []
+
+def save_to_history(session_data):
+    """Save session data to history"""
+    global scraping_history
+    try:
+        scraping_history.append(session_data)
+        with open(history_file, 'w') as f:
+            json.dump(scraping_history, f, indent=2)
+    except Exception as e:
+        print(f"⚠️  Could not save to history: {str(e)}")
+
+# Load history on startup
+load_history()
+
 @app.route('/')
 def index():
     """API documentation endpoint"""
@@ -43,13 +72,15 @@ def index():
             "/accounts": "Run the scraping process and return accounts in JSON",
             "/status": "Check the current scraping status",
             "/health": "Health check endpoint",
-            "/latest": "Get the latest scraped results without running a new scrape"
+            "/latest": "Get the latest scraped results without running a new scrape",
+            "/logs": "View all scraping history from the beginning"
         },
         "usage": {
             "accounts": "GET /accounts to start scraping and get results",
             "status": "GET /status to check if scraping is running",
             "health": "GET /health to check if the service is running",
-            "latest": "GET /latest to get the most recent results"
+            "latest": "GET /latest to get the most recent results",
+            "logs": "GET /logs to view all scraping history"
         }
     })
 
@@ -81,6 +112,31 @@ def latest():
             "status": "error",
             "message": "No results available yet. Please run /accounts first."
         }), 404
+
+@app.route('/logs')
+def logs():
+    """View all scraping history from the beginning"""
+    if not scraping_history:
+        return jsonify({
+            "status": "info",
+            "message": "No scraping history available yet",
+            "total_sessions": 0,
+            "history": []
+        })
+    
+    # Sort history by timestamp (newest first)
+    sorted_history = sorted(scraping_history, key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # Calculate total accounts across all sessions
+    total_accounts = sum(session.get("total_accounts", 0) for session in scraping_history)
+    
+    return jsonify({
+        "status": "success",
+        "message": "Returning complete scraping history",
+        "total_sessions": len(scraping_history),
+        "total_accounts_all_time": total_accounts,
+        "history": sorted_history
+    })
 
 @app.route('/accounts')
 def get_accounts():
@@ -150,6 +206,9 @@ def get_accounts():
                 "debug_html_url": automation.catbox_url if hasattr(automation, 'catbox_url') else None,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
+            
+            # Save to history
+            save_to_history(latest_results.copy())
             
             # Update status
             scraping_status["current_task"] = "Completed"
