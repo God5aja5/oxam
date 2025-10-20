@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: oxaam-scraper
+    env: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 5000
